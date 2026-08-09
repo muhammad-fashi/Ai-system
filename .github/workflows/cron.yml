@@ -1,16 +1,22 @@
 name: Calling queue cron
 
 # Free replacement for Vercel Cron (the Hobby plan only runs crons once/day).
-# GitHub Actions' minimum schedule interval is 5 minutes, and runs may be
-# delayed under load — that's fine for advancing the calling queue.
+# It pings your DEPLOYED app to advance the calling queue.
 #
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   APP_URL      e.g. https://your-app.vercel.app   (no trailing slash)
-#   CRON_SECRET  the same value set in your Vercel env vars
+# ─────────────────────────────────────────────────────────────────────────
+# DISABLED BY DEFAULT: the automatic schedule is commented out so it does NOT
+# run (and does NOT email you failures) until you've actually deployed.
+#
+# To turn it on once your app is live:
+#   1. Add two repository secrets (Settings → Secrets and variables → Actions):
+#        APP_URL      e.g. https://your-app.vercel.app   (no trailing slash)
+#        CRON_SECRET  the same value set in your Vercel env vars
+#   2. Uncomment the `schedule:` block below and push.
+# ─────────────────────────────────────────────────────────────────────────
 on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch: {} # allow manual "Run workflow" from the Actions tab
+  # schedule:
+  #   - cron: "*/5 * * * *"
+  workflow_dispatch: {} # run manually from the Actions tab
 
 jobs:
   tick:
@@ -18,9 +24,10 @@ jobs:
     steps:
       - name: Advance calling queue
         run: |
+          # Skip cleanly (no failure email) if secrets aren't configured yet.
           if [ -z "${{ secrets.APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
-            echo "APP_URL and CRON_SECRET repository secrets must be set."
-            exit 1
+            echo "APP_URL / CRON_SECRET not set — skipping. Configure them to enable."
+            exit 0
           fi
           code=$(curl -s -o /tmp/out.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
@@ -30,6 +37,7 @@ jobs:
           [ "$code" = "200" ]
 
       - name: Process due follow-ups
+        if: ${{ secrets.APP_URL != '' && secrets.CRON_SECRET != '' }}
         run: |
           code=$(curl -s -o /tmp/fu.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
