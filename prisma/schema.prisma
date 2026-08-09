@@ -1,0 +1,341 @@
+// =========================================================================
+// AI Outbound Calling & Sales Management System — Prisma schema
+// =========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ------------------------------------------------------------------ enums
+
+enum Role {
+  ADMIN
+  MANAGER
+  AGENT
+}
+
+enum ClientStatus {
+  NEW
+  PENDING
+  CALLING
+  CONTACTED
+  INTERESTED
+  NOT_INTERESTED
+  FOLLOW_UP_REQUIRED
+  MEETING_BOOKED
+  CONVERTED
+  DO_NOT_CALL
+  INVALID_NUMBER
+}
+
+enum InterestLevel {
+  HOT
+  WARM
+  COLD
+  UNKNOWN
+}
+
+enum CampaignStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  STOPPED
+  COMPLETED
+}
+
+// Per-client state within a campaign queue.
+enum QueueStatus {
+  QUEUED
+  CALLING
+  CONNECTED
+  COMPLETED
+  FAILED
+  NO_ANSWER
+  BUSY
+  VOICEMAIL
+  RETRY_SCHEDULED
+  DO_NOT_CALL
+  SKIPPED
+}
+
+enum CallStatus {
+  QUEUED
+  INITIATED
+  RINGING
+  CONNECTED
+  COMPLETED
+  FAILED
+  NO_ANSWER
+  BUSY
+  VOICEMAIL
+  CANCELLED
+}
+
+enum CallOutcome {
+  INTERESTED
+  NOT_INTERESTED
+  FOLLOW_UP_REQUIRED
+  MEETING_REQUESTED
+  PRICING_REQUESTED
+  INFORMATION_REQUESTED
+  NO_ANSWER
+  BUSY
+  VOICEMAIL
+  WRONG_NUMBER
+  DO_NOT_CALL
+  CONVERTED
+  UNKNOWN
+}
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  RESCHEDULED
+  CANCELLED
+}
+
+// ---------------------------------------------------------------- models
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(ADMIN)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs AuditLog[]
+  followUps FollowUp[]
+}
+
+model Client {
+  id            String        @id @default(cuid())
+  firstName     String
+  lastName      String?
+  companyName   String?
+  phone         String
+  email         String?
+  website       String?
+  industry      String?
+  country       String?
+  city          String?
+  timezone      String?
+  leadSource    String?
+  servicesNeeded String[]     @default([])
+  notes         String?
+  preferredLanguage String?
+  preferredCallTime String?
+  customFields  Json?
+
+  status        ClientStatus  @default(NEW)
+  interestLevel InterestLevel @default(UNKNOWN)
+  leadScore     Int?
+  doNotCall     Boolean       @default(false)
+
+  callCount     Int           @default(0)
+  lastCallAt    DateTime?
+  nextFollowUp  DateTime?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  calls           Call[]
+  campaignClients CampaignClient[]
+  followUps       FollowUp[]
+  doNotCallEntry  DoNotCall?
+
+  @@index([status])
+  @@index([interestLevel])
+  @@index([phone])
+  @@index([doNotCall])
+  @@index([createdAt])
+}
+
+model Campaign {
+  id             String         @id @default(cuid())
+  name           String
+  description    String?
+  status         CampaignStatus @default(DRAFT)
+  agentId        String?
+  fromNumber     String?
+  maxConcurrency Int            @default(1)
+  retryLimit     Int            @default(2)
+  retryDelayMin  Int            @default(60)
+  delayBetweenSec Int           @default(5)
+  callingHoursStart Int         @default(9)   // local hour 0-23
+  callingHoursEnd   Int         @default(18)
+  callingDays    Int[]          @default([1, 2, 3, 4, 5]) // 0=Sun..6=Sat
+  timezone       String         @default("UTC")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  campaignClients CampaignClient[]
+  calls           Call[]
+
+  @@index([status])
+}
+
+model CampaignClient {
+  id          String      @id @default(cuid())
+  campaignId  String
+  clientId    String
+  status      QueueStatus @default(QUEUED)
+  attempts    Int         @default(0)
+  position    Int         @default(0)
+  lastAttempt DateTime?
+  nextAttempt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  client   Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, clientId])
+  @@index([status])
+  @@index([nextAttempt])
+}
+
+model Call {
+  id            String       @id @default(cuid())
+  clientId      String
+  campaignId    String?
+  retellCallId  String?      @unique
+  phoneNumber   String
+  fromNumber    String?
+  agentId       String?
+
+  status        CallStatus   @default(QUEUED)
+  outcome       CallOutcome  @default(UNKNOWN)
+
+  startTime     DateTime?
+  endTime       DateTime?
+  duration      Int?         // seconds
+
+  recordingUrl  String?
+  transcript    Json?        // array of {role, content, ts}
+  transcriptText String?
+  summary       String?
+  sentiment     String?
+  interestLevel InterestLevel @default(UNKNOWN)
+  leadScore     Int?
+  leadScoreReason String?
+  servicesDiscussed String[] @default([])
+  clientRequirements String?
+  objections    String?
+  nextAction    String?
+  followUpDate  DateTime?
+  meetingStatus String?
+
+  isTest        Boolean      @default(false)
+  errorMessage  String?
+  disconnectionReason String?
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  client    Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  campaign  Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  followUps FollowUp[]
+
+  @@index([clientId])
+  @@index([campaignId])
+  @@index([status])
+  @@index([outcome])
+  @@index([createdAt])
+}
+
+model FollowUp {
+  id          String         @id @default(cuid())
+  clientId    String
+  callId      String?
+  scheduledAt DateTime
+  reason      String?
+  notes       String?
+  status      FollowUpStatus @default(PENDING)
+  assignedToId String?
+  autoCall    Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  client     Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  call       Call?  @relation(fields: [callId], references: [id], onDelete: SetNull)
+  assignedTo User?  @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model Service {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model DoNotCall {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  clientId  String?  @unique
+  reason    String?
+  createdAt DateTime @default(now())
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([phone])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  target    String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([action])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([read])
+  @@index([createdAt])
+}
+
+// Singleton-style settings store (one row per key group).
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model WebhookEvent {
+  id           String   @id @default(cuid())
+  eventId      String?  @unique // Retell event/call id for idempotency
+  eventType    String
+  retellCallId String?
+  payload      Json
+  processed    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([retellCallId])
+}
