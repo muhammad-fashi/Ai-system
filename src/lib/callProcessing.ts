@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { analyzeCall, outcomeToClientStatus } from "./analysis";
 import { getSetting } from "./settings";
 import { notify } from "./audit";
+import { getCall, isMockMode } from "./retell";
 import type { Prisma } from "@prisma/client";
 
 interface TranscriptTurn {
@@ -259,4 +260,106 @@ export function buildMockTranscript(client: {
   }));
   const text = turns.map((t) => `${t.role}: ${t.content}`).join("\n");
   return { turns, text, outcomeHint: pick.hint };
+}
+
+/**
+ * Pull the latest state of a single call directly from Retell and, if the call
+ * has ended, finalize it (transcript, recording, analysis). This is the
+ * fallback for when the webhook doesn't arrive (misconfigured URL, app not
+ * reachable, missed event). Safe to call repeatedly — finalizeCall is
+ * idempotent.
+ *
+ * Returns { updated, status } where updated=true means the call was finalized.
+ */
+export async function syncCallFromRetell(
+  callId: string
+): Promise<{ updated: boolean; status?: string; note?: string }> {
+  if (isMockMode()) return { updated: false, note: "mock-mode" };
+
+  const call = await prisma.call.findUnique({ where: { id: callId } });
+  if (!call) return { updated: false, note: "call-not-found" };
+  if (!call.retellCallId) return { updated: false, note: "no-retell-id" };
+
+  const rc: any = await getCall(call.retellCallId);
+  if (!rc) return { updated: false, note: "retell-fetch-failed" };
+
+  const status: string = rc.call_status || rc.status || "";
+  const ended =
+    status === "ended" ||
+    status === "error" ||
+    Boolean(rc.end_timestamp) ||
+    Boolean(rc.disconnection_reason);
+
+  // Still ringing/ongoing — just reflect the live status.
+  if (!ended) {
+    if (status === "ongoing" && call.status !== "CONNECTED") {
+      await prisma.call.update({
+        where: { id: call.id },
+        data: {
+          status: "CONNECTED",
+          startTime: rc.start_timestamp ? new Date(rc.start_timestamp) : call.startTime,
+        },
+      });
+    }
+    return { updated: false, status };
+  }
+
+  const transcriptTurns = (rc.transcript_object || []).map((t: any) => ({
+    role: t.role === "agent" ? "agent" : "user",
+    content: t.content || "",
+    ts: t.words?.[0]?.start ?? undefined,
+  }));
+
+  const duration =
+    rc.start_timestamp && rc.end_timestamp
+      ? Math.round((rc.end_timestamp - rc.start_timestamp) / 1000)
+      : rc.duration_ms
+      ? Math.round(rc.duration_ms / 1000)
+      : call.duration ?? null;
+
+  await finalizeCall({
+    callId: call.id,
+    status: status || "ended",
+    disconnectionReason: rc.disconnection_reason || null,
+    duration,
+    startTime: rc.start_timestamp ? new Date(rc.start_timestamp) : call.startTime,
+    endTime: rc.end_timestamp ? new Date(rc.end_timestamp) : new Date(),
+    recordingUrl: rc.recording_url || null,
+    transcriptTurns: transcriptTurns.length ? transcriptTurns : null,
+    transcriptText: rc.transcript || null,
+    retellAnalysis: rc.call_analysis || null,
+  });
+
+  return { updated: true, status: "ended" };
+}
+
+/**
+ * Reconcile all calls still marked active by fetching their state from Retell.
+ * Runs on every cron tick so the CMS stays up to date even if webhooks fail.
+ * Only touches calls started more than a few seconds ago to avoid racing the
+ * dial itself.
+ */
+export async function reconcileActiveCalls(): Promise<number> {
+  if (isMockMode()) return 0;
+
+  const stale = await prisma.call.findMany({
+    where: {
+      status: { in: ["INITIATED", "RINGING", "CONNECTED"] as any },
+      retellCallId: { not: null },
+      startTime: { lt: new Date(Date.now() - 15_000) },
+    },
+    orderBy: { startTime: "asc" },
+    take: 50,
+  });
+
+  let updated = 0;
+  for (const c of stale) {
+    try {
+      const r = await syncCallFromRetell(c.id);
+      if (r.updated) updated++;
+    } catch {
+      // ignore individual failures; will retry next tick
+    }
+  }
+  return updated;
 }

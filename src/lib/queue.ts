@@ -6,7 +6,11 @@ import {
   isMockMode,
 } from "./retell";
 import { isValidPhone, normalizePhone } from "./utils";
-import { finalizeCall, buildMockTranscript } from "./callProcessing";
+import {
+  finalizeCall,
+  buildMockTranscript,
+  reconcileActiveCalls,
+} from "./callProcessing";
 import { logAudit } from "./audit";
 
 const ACTIVE_CALL_STATUSES = ["INITIATED", "RINGING", "CONNECTED"];
@@ -230,6 +234,16 @@ export async function processQueue(): Promise<{
 }> {
   const details: string[] = [];
   let callsPlaced = 0;
+
+  // First, pull results for any finished calls straight from Retell so the CMS
+  // stays current even if a webhook was missed. Runs regardless of campaigns.
+  let reconciled = 0;
+  try {
+    reconciled = await reconcileActiveCalls();
+    if (reconciled > 0) details.push(`Reconciled ${reconciled} finished call(s) from Retell.`);
+  } catch (e) {
+    details.push(`Reconcile error: ${(e as Error).message}`);
+  }
 
   const calling = await getSetting("calling");
   const runningCampaigns = await prisma.campaign.findMany({

@@ -49,6 +49,28 @@ export default function ClientReportPage({
     }
   }
 
+  async function refreshFromRetell(callId: string) {
+    try {
+      const r = await api<{ updated: boolean; status?: string }>(
+        `/api/calls/${callId}/sync`,
+        { method: "POST" }
+      );
+      if (r.updated) {
+        toast("Call updated from Retell", "success");
+      } else {
+        toast(
+          r.status === "ongoing" || r.status === "registered"
+            ? "Call still in progress — try again shortly"
+            : "No new data from Retell yet",
+          "info"
+        );
+      }
+      mutate();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -149,19 +171,28 @@ export default function ClientReportPage({
               <Card>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-semibold">Call Report</h3>
-                  {calls.length > 1 && (
-                    <select
-                      className="input max-w-[220px] py-1.5"
-                      value={selectedCall.id}
-                      onChange={(e) => setSelectedCallId(e.target.value)}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      className="btn-secondary py-1.5"
+                      onClick={() => refreshFromRetell(selectedCall.id)}
+                      title="Pull the latest transcript & result from Retell"
                     >
-                      {calls.map((c: any) => (
-                        <option key={c.id} value={c.id}>
-                          {formatDateTime(c.createdAt)} · {titleCase(c.status)}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                      🔄 Refresh from Retell
+                    </button>
+                    {calls.length > 1 && (
+                      <select
+                        className="input max-w-[220px] py-1.5"
+                        value={selectedCall.id}
+                        onChange={(e) => setSelectedCallId(e.target.value)}
+                      >
+                        {calls.map((c: any) => (
+                          <option key={c.id} value={c.id}>
+                            {formatDateTime(c.createdAt)} · {titleCase(c.status)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
