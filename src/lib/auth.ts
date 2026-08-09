@@ -58,3 +58,30 @@ export async function requireSession(): Promise<SessionPayload | null> {
 export async function userCount(): Promise<number> {
   return prisma.user.count();
 }
+
+/**
+ * Auto-provision the first admin from env vars, but ONLY when the database has
+ * no users yet. Credentials are never stored in code — they come from
+ * DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD (set in Vercel env). This lets
+ * you sign in immediately after deploy without the setup screen.
+ * Returns the created admin's email, or null if nothing was created.
+ */
+export async function ensureBootstrapAdmin(): Promise<string | null> {
+  const email = process.env.DEFAULT_ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.DEFAULT_ADMIN_PASSWORD;
+  if (!email || !password) return null;
+
+  const count = await prisma.user.count();
+  if (count > 0) return null;
+
+  const passwordHash = await hashPassword(password);
+  await prisma.user.create({
+    data: {
+      email,
+      name: process.env.DEFAULT_ADMIN_NAME?.trim() || "Admin",
+      passwordHash,
+      role: "ADMIN",
+    },
+  });
+  return email;
+}
