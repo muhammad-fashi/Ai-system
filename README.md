@@ -44,7 +44,9 @@ Vercel Cron (every 5 min)
    → /api/cron/process-followups → place due auto-call follow-ups
 ```
 
-> **Why a DB-backed queue instead of BullMQ/Redis?** Vercel's serverless runtime can't host a long-lived worker process. The queue state lives in Postgres and is advanced by Vercel Cron — the production-correct pattern for Vercel. Concurrency, retries, calling-hours and per-client limits are all enforced in `src/lib/queue.ts`.
+> **Why a DB-backed queue instead of BullMQ/Redis?** Vercel's serverless runtime can't host a long-lived worker process. The queue state lives in Postgres and is advanced by a cron ping — the production-correct pattern for Vercel. Concurrency, retries, calling-hours and per-client limits are all enforced in `src/lib/queue.ts`.
+
+> **Free plan note:** Vercel's **Hobby (free)** plan runs cron jobs only **once per day**, which is too slow for the queue. A free **GitHub Actions** workflow ([`.github/workflows/cron.yml`](./.github/workflows/cron.yml)) pings the queue every 5 minutes instead. Add two repo secrets — `APP_URL` and `CRON_SECRET` (Settings → Secrets and variables → Actions) — and it just works. On Vercel **Pro**, raise the `vercel.json` cron schedules back to `* * * * *` and you can drop the workflow.
 
 ### MOCK mode
 If `RETELL_API_KEY` is **not** set, the system runs in **MOCK mode**: calls are simulated with generated transcripts so you can exercise the entire flow (campaign → call → transcript → analysis → report) without placing real calls. Set the key to switch to **LIVE** calls.

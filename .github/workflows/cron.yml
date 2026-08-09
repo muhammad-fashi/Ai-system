@@ -1,0 +1,39 @@
+name: Calling queue cron
+
+# Free replacement for Vercel Cron (the Hobby plan only runs crons once/day).
+# GitHub Actions' minimum schedule interval is 5 minutes, and runs may be
+# delayed under load — that's fine for advancing the calling queue.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   APP_URL      e.g. https://your-app.vercel.app   (no trailing slash)
+#   CRON_SECRET  the same value set in your Vercel env vars
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # allow manual "Run workflow" from the Actions tab
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Advance calling queue
+        run: |
+          if [ -z "${{ secrets.APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "APP_URL and CRON_SECRET repository secrets must be set."
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/out.txt -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/process-queue")
+          echo "process-queue -> HTTP $code"
+          cat /tmp/out.txt || true
+          [ "$code" = "200" ]
+
+      - name: Process due follow-ups
+        run: |
+          code=$(curl -s -o /tmp/fu.txt -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/process-followups")
+          echo "process-followups -> HTTP $code"
+          cat /tmp/fu.txt || true
+          [ "$code" = "200" ]

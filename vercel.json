@@ -1,14 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "prisma generate && next build",
+  "comment_crons": "Vercel Hobby (free) plan only runs crons once per day, which is too slow for the calling queue. These daily entries are a Hobby-safe fallback; the frequent ticks come from the free GitHub Actions workflow in .github/workflows/cron.yml. On Vercel Pro you can raise these back to '* * * * *' and '*/5 * * * *'.",
   "crons": [
     {
       "path": "/api/cron/process-queue",
-      "schedule": "* * * * *"
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/cron/process-followups",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }
