@@ -1,0 +1,35 @@
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/typescript-node:22
+    command: sleep infinity
+    volumes:
+      - ../..:/workspaces:cached
+    environment:
+      # The app talks to the "db" service below — a real Postgres running
+      # inside the codespace. No external database needed.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/ai_system
+      DIRECT_URL: postgresql://postgres:postgres@db:5432/ai_system
+      AUTH_SECRET: dev-only-auth-secret-change-in-production-1234567890
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      CRON_SECRET: dev-cron-secret
+      # Auto-created admin — sign in with these after the codespace starts.
+      DEFAULT_ADMIN_EMAIL: admin@ai-caller.dev
+      DEFAULT_ADMIN_PASSWORD: admin12345
+      DEFAULT_ADMIN_NAME: Admin
+      # RETELL_API_KEY left empty on purpose -> MOCK mode (simulated calls).
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ai_system
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
